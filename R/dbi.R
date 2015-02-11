@@ -87,7 +87,7 @@ setMethod("dbConnect", "MonetDBDriver", def=function(drv, dbname="demo", user="m
   }
   # this is important, otherwise we'll trip an assertion
   port <- as.integer(port)
-
+  
   # validate port number
   if (length(port) != 1 || port < 1 || port > 65535) {
     stop("Illegal port number ",port)
@@ -133,7 +133,7 @@ setMethod("dbConnect", "MonetDBDriver", def=function(drv, dbname="demo", user="m
   }
   
   return(conn)
-
+  
 }, 
 valueClass="MonetDBConnection")
 
@@ -204,14 +204,14 @@ setMethod("dbListFields", "MonetDBConnection", def=function(conn, name, ...) {
   if (!dbExistsTable(conn, name))
     stop(paste0("Unknown table: ", name));
   df <- dbGetQuery(conn, paste0("select columns.name as name from sys.columns join sys.tables on \
-    columns.table_id=tables.id where tables.name='", name, "';"))	
+                                columns.table_id=tables.id where tables.name='", name, "';"))  
   df$name
 })
 
 setMethod("dbExistsTable", "MonetDBConnection", def=function(conn, name, ...) {
   # TODO: this is evil... 
   return(tolower(gsub("(^\"|\"$)","",as.character(name))) %in% 
-    tolower(dbListTables(conn,sys_tables=T)))
+           tolower(dbListTables(conn,sys_tables=T)))
 })
 
 setMethod("dbGetException", "MonetDBConnection", def=function(conn, ...) {
@@ -255,7 +255,7 @@ setMethod("dbSendQuery", signature(conn="MonetDBConnection", statement="characte
               env$conn <- conn
               env$query <- statement
               env$info <- resp
-
+              
             }
             if (resp$type == MSG_MESSAGE) {
               env$success = FALSE
@@ -299,7 +299,7 @@ setMethod("dbQuoteIdentifier", c("MonetDBConnection", "SQL"), function(conn, x, 
 
 # adapted from RMonetDB, very useful...
 setMethod("dbWriteTable", "MonetDBConnection", def=function(conn, name, value, overwrite=FALSE, 
-  append=FALSE, csvdump=FALSE, transaction=TRUE,...) {
+                                                            append=FALSE, csvdump=FALSE, transaction=TRUE,...) {
   if (is.vector(value) && !is.list(value)) value <- data.frame(x=value)
   if (length(value)<1) stop("value must have at least one column")
   if (is.null(names(value))) names(value) <- paste("V", 1:length(value), sep='')
@@ -315,8 +315,8 @@ setMethod("dbWriteTable", "MonetDBConnection", def=function(conn, name, value, o
   if (dbExistsTable(conn, qname)) {
     if (overwrite) dbRemoveTable(conn, qname)
     if (!overwrite && !append) stop("Table ", qname, " already exists. Set overwrite=TRUE if you want 
-      to remove the existing table. Set append=TRUE if you would like to add the new data to the 
-      existing table.")
+                                    to remove the existing table. Set append=TRUE if you would like to add the new data to the 
+                                    existing table.")
   }
   if (!dbExistsTable(conn, qname)) {
     fts <- sapply(value, dbDataType, dbObj=conn)
@@ -329,7 +329,7 @@ setMethod("dbWriteTable", "MonetDBConnection", def=function(conn, name, value, o
       tmp <- tempfile(fileext = ".csv")
       write.table(value, tmp, sep = ",", quote = TRUE,row.names = FALSE, col.names = FALSE,na="")
       dbSendQuery(conn, paste0("COPY ",format(nrow(value), scientific=FALSE)," RECORDS INTO ", qname,
-      " FROM '", tmp, "' USING DELIMITERS ',','\\n','\"' NULL AS ''"))
+                               " FROM '", tmp, "' USING DELIMITERS ',','\\n','\"' NULL AS ''"))
       file.remove(tmp) 
     } else {
       vins <- paste("(", paste(rep("?", length(value)), collapse=', '), ")", sep='')
@@ -337,16 +337,16 @@ setMethod("dbWriteTable", "MonetDBConnection", def=function(conn, name, value, o
       # chunk some inserts together so we do not need to do a round trip for every one
       splitlen <- 0:(nrow(value)-1) %/% getOption("monetdb.insert.splitsize", 1000)
       lapply(split(value, splitlen), 
-        function(valueck) {
-        bvins <- c()
-        for (j in 1:length(valueck[[1]])) bvins <- c(bvins,.bindParameters(vins, as.list(valueck[j, ])))
-        dbSendUpdate(conn, paste0("INSERT INTO ", qname, " VALUES ",paste0(bvins, collapse=", ")))
-      })
+             function(valueck) {
+               bvins <- c()
+               for (j in 1:length(valueck[[1]])) bvins <- c(bvins,.bindParameters(vins, as.list(valueck[j, ])))
+               dbSendUpdate(conn, paste0("INSERT INTO ", qname, " VALUES ",paste0(bvins, collapse=", ")))
+             })
       if (transaction) dbCommit(conn)
     }
   }
   return(invisible(TRUE))
-})
+  })
 
 setMethod("dbDataType", signature(dbObj="MonetDBConnection", obj = "ANY"), def = function(dbObj, 
                                                                                           obj, ...) {
@@ -394,9 +394,6 @@ setMethod("dbSendUpdateAsync", signature(conn="MonetDBConnection", statement="ch
           })
 
 
-
-# mapiQuote(toString(value))
-
 .bindParameters <- function(statement, param) {
   for (i in 1:length(param)) {
     value <- param[[i]]
@@ -439,6 +436,8 @@ setClass("MonetDBResult", representation("DBIResult", env="environment"))
 .CT_BOOL <- 4L
 .CT_RAW <- 5L
 .CT_INT <- 6L
+.CT_LONG <- 7L
+.CT_DATE <- 8L
 
 monetdbRtype <- function(dbType) {
   dbType <- toupper(dbType)
@@ -446,14 +445,20 @@ monetdbRtype <- function(dbType) {
   if (dbType %in% c("TINYINT", "SMALLINT", "INT")) {
     return("integer")
   }
-  if (dbType %in% c("BIGINT", "REAL", "DOUBLE", "DECIMAL", "WRD")) {			
+  if (dbType == "BIGINT"){
+    return("integer64")
+  }
+  if (dbType %in% c("REAL", "DOUBLE", "DECIMAL", "WRD")) {			
     return("numeric")
   }
   if (dbType %in% c("CHAR", "VARCHAR", "CLOB", "STR")) {
     return("character")		
   }
-  if (dbType %in% c("INTERVAL", "DATE", "TIME", "TIMESTAMP")) {
+  if (dbType %in% c("INTERVAL", "DATE", "TIME")) {
     return("date")	
+  }
+  if (dbType == "TIMESTAMP") {
+    return("POSIXct")
   }
   if (dbType == "BOOLEAN") {
     return("logical")			
@@ -483,7 +488,7 @@ setMethod("dbFetch", signature(res="MonetDBResult", n="numeric"), def=function(r
   info <- res@env$info
   stopifnot(res@env$delivered <= info$rows, info$index <= info$rows)
   remaining <- info$rows - res@env$delivered
-    
+  
   if (n < 0) {
     n <- remaining
   } else {
@@ -519,6 +524,15 @@ setMethod("dbFetch", signature(res="MonetDBResult", n="numeric"), def=function(r
     if (rtype=="raw") {
       df[[i]] <- raw()
       ct[i] <- .CT_RAW
+    }
+    if (rtype=="integer64") {
+      df[[i]] <- integer64()
+      ct[[i]] <- .CT_LONG
+    }
+    if (rtype=="POSIXct") {
+      # Danger Will Robinson!
+      df[[i]] <- as.POSIXct(0,tz="UTC",origin="1970-01-01 00:00:00")
+      ct[[i]] <- .CT_DATE
     }
     names(df)[i] <- info$names[i]
   }
@@ -558,6 +572,13 @@ setMethod("dbFetch", signature(res="MonetDBResult", n="numeric"), def=function(r
     }
     if (col == .CT_RAW) {
       df[[j]] <- lapply(parts[[j]], charToRaw)
+    }
+    if (col == .CT_LONG) {
+      df[[j]] <- as.integer64(parts[[j]])
+    }
+    if (col == .CT_DATE) {
+      #       print(paste(parts[j]))
+      df[[j]] <- as.POSIXct(parts[[j]], tz="UTC", origin="1970-01-01 00:00:00")
     }
   }
   
@@ -603,11 +624,13 @@ setMethod("dbIsValid", signature(dbObj="MonetDBResult"), def=function(dbObj, ...
   return(invisible(TRUE))
 })
 
-monetTypes <- rep(c("integer", "numeric", "character", "character", "logical", "raw"), c(3, 6, 3, 4, 1, 1))
+monetTypes <- rep(c("integer", "integer64", "numeric", "character", "character", "POSIXct", "logical", "raw"), c(3, 1, 6, 3, 3, 1,1, 1))
 names(monetTypes) <- c(c("TINYINT", "SMALLINT", "INT"),
-                       c("BIGINT", "HUGEINT", "REAL", "DOUBLE", "DECIMAL", "WRD"), 
+                       c("BIGINT"),
+                       c("HUGEINT", "REAL", "DOUBLE", "DECIMAL", "WRD"), 
                        c("CHAR", "VARCHAR", "CLOB"), 
-                       c("INTERVAL", "DATE", "TIME", "TIMESTAMP"), 
+                       c("INTERVAL", "DATE", "TIME"), 
+                       "TIMESTAMP",
                        "BOOLEAN", 
                        "BLOB")
 
@@ -661,4 +684,3 @@ monet.read.csv <- monetdb.read.csv <- function(conn, files, tablename, nrows, he
   }
   dbGetQuery(conn, paste("select count(*) from", tablename))
 }
-
