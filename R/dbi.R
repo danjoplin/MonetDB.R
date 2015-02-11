@@ -438,11 +438,15 @@ setClass("MonetDBResult", representation("DBIResult", env="environment"))
 .CT_CHRR <- 3L
 .CT_BOOL <- 4L
 .CT_RAW <- 5L
+.CT_INT <- 6L
 
 monetdbRtype <- function(dbType) {
   dbType <- toupper(dbType)
   
-  if (dbType %in% c("TINYINT", "SMALLINT", "INT", "BIGINT", "REAL", "DOUBLE", "DECIMAL", "WRD")) {			
+  if (dbType %in% c("TINYINT", "SMALLINT", "INT")) {
+    return("integer")
+  }
+  if (dbType %in% c("BIGINT", "REAL", "DOUBLE", "DECIMAL", "WRD")) {			
     return("numeric")
   }
   if (dbType %in% c("CHAR", "VARCHAR", "CLOB", "STR")) {
@@ -492,6 +496,10 @@ setMethod("dbFetch", signature(res="MonetDBResult", n="numeric"), def=function(r
   
   for (i in seq.int(info$cols)) {
     rtype <- monetdbRtype(info$types[i])
+    if (rtype=="integer") {
+      df[[i]] <- integer()
+      ct[[i]] <- .CT_INT
+    }
     if (rtype=="numeric") {			
       df[[i]] <- numeric()
       ct[i] <- .CT_NUM
@@ -537,6 +545,8 @@ setMethod("dbFetch", signature(res="MonetDBResult", n="numeric"), def=function(r
   # convert values column by column
   for (j in seq.int(info$cols)) {	
     col <- ct[[j]]
+    if (col == .CT_INT)
+      df[[j]] <- as.integer(parts[[j]])
     if (col == .CT_NUM) 
       df[[j]] <- as.numeric(parts[[j]])
     if (col == .CT_CHRR) 
@@ -593,8 +603,9 @@ setMethod("dbIsValid", signature(dbObj="MonetDBResult"), def=function(dbObj, ...
   return(invisible(TRUE))
 })
 
-monetTypes <- rep(c("numeric", "character", "character", "logical", "raw"), c(9, 3, 4, 1, 1))
-names(monetTypes) <- c(c("TINYINT", "SMALLINT", "INT", "BIGINT", "HUGEINT", "REAL", "DOUBLE", "DECIMAL", "WRD"), 
+monetTypes <- rep(c("integer", "numeric", "character", "character", "logical", "raw"), c(3, 6, 3, 4, 1, 1))
+names(monetTypes) <- c(c("TINYINT", "SMALLINT", "INT"),
+                       c("BIGINT", "HUGEINT", "REAL", "DOUBLE", "DECIMAL", "WRD"), 
                        c("CHAR", "VARCHAR", "CLOB"), 
                        c("INTERVAL", "DATE", "TIME", "TIMESTAMP"), 
                        "BOOLEAN", 
