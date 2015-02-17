@@ -429,44 +429,35 @@ setMethod("dbSendUpdateAsync", signature(conn="MonetDBConnection", statement="ch
 
 ### MonetDBResult
 setClass("MonetDBResult", representation("DBIResult", env="environment"))
+# 
+# .CT_NUM <- 1L
+# .CT_CHR <- 2L
+# .CT_CHRR <- 3L
+# .CT_BOOL <- 4L
+# .CT_RAW <- 5L
+# .CT_INT <- 6L
+# .CT_LONG <- 7L
+# .CT_DATE <- 8L
 
-.CT_NUM <- 1L
-.CT_CHR <- 2L
-.CT_CHRR <- 3L
-.CT_BOOL <- 4L
-.CT_RAW <- 5L
-.CT_INT <- 6L
-.CT_LONG <- 7L
-.CT_DATE <- 8L
+r.types <- r.type.defaults <- c("TINYINT"="integer", "SMALLINT"="integer", "INT"="integer", 
+                  "BIGINT"="numeric", "REAL"="numeric", "DOUBLE"="numeric", "DECIMAL"="numeric", "WRD"="numeric", 
+                  "CHAR"="character", "VARCHAR"="character", "CLOB"="character", "STR"="character", 
+                  "INTERVAL"="character", "DATE"="character", "TIME"="character", "TIMESTAMP"="character", 
+                  "BOOLEAN"="logical", "BLOB"="raw")
+
+setCustomRTypes <- function(custom.types) {
+  stopifnot(all(names(custom.types) %in% names(r.types)), all(sapply(custom.types, is.function)))
+  r.types[custom.types] <- custom.types
+}
+
+resetRTypes <- function() {
+  r.types <- r.type.defaults
+}
 
 monetdbRtype <- function(dbType) {
-  dbType <- toupper(dbType)
-  
-  if (dbType %in% c("TINYINT", "SMALLINT", "INT")) {
-    return("integer")
-  }
-  if (dbType == "BIGINT"){
-    return("integer64")
-  }
-  if (dbType %in% c("REAL", "DOUBLE", "DECIMAL", "WRD")) {			
-    return("numeric")
-  }
-  if (dbType %in% c("CHAR", "VARCHAR", "CLOB", "STR")) {
-    return("character")		
-  }
-  if (dbType %in% c("INTERVAL", "DATE", "TIME")) {
-    return("date")	
-  }
-  if (dbType == "TIMESTAMP") {
-    return("POSIXct")
-  }
-  if (dbType == "BOOLEAN") {
-    return("logical")			
-  }
-  if (dbType == "BLOB") {
-    return("raw")
-  }
-  stop("Unknown DB type ", dbType)
+  out <- r.type.defaults[toupper(dbType)]
+  if (is.na(out)) stop("Unknown DB type ", dbType)
+  return(out)
 }
 
 setMethod("fetch", signature(res="MonetDBResult", n="numeric"), def=function(res, n, ...) {
@@ -493,50 +484,13 @@ setMethod("dbFetch", signature(res="MonetDBResult", n="numeric"), def=function(r
     n <- remaining
   } else {
     n <- min(n, remaining)
-  }  
-  
-  # prepare the result holder df with columns of the appropriate type
-  df = list()
-  ct <- rep(0L, info$cols)
-  
-  for (i in seq.int(info$cols)) {
-    rtype <- monetdbRtype(info$types[i])
-    if (rtype=="integer") {
-      df[[i]] <- integer()
-      ct[[i]] <- .CT_INT
-    }
-    if (rtype=="numeric") {			
-      df[[i]] <- numeric()
-      ct[i] <- .CT_NUM
-    }
-    if (rtype=="character") {
-      df[[i]] <- character()
-      ct[i] <- .CT_CHR			
-    }
-    if (rtype=="date") {
-      df[[i]] <- character()
-      ct[i] <- .CT_CHRR			
-    }
-    if (rtype=="logical") {
-      df[[i]] <- logical()
-      ct[i] <- .CT_BOOL			
-    }
-    if (rtype=="raw") {
-      df[[i]] <- raw()
-      ct[i] <- .CT_RAW
-    }
-    if (rtype=="integer64") {
-      df[[i]] <- integer64()
-      ct[[i]] <- .CT_LONG
-    }
-    if (rtype=="POSIXct") {
-      # Danger Will Robinson!
-      df[[i]] <- as.POSIXct(0,tz="UTC",origin="1970-01-01 00:00:00")
-      ct[[i]] <- .CT_DATE
-    }
-    names(df)[i] <- info$names[i]
   }
   
+  # prepare the result holder df with columns of the appropriate type
+  ct <- sapply(info$types, monetdbRtype)
+  df <- sapply(ct, function(k) as(NULL, k))
+  names(df) <- info$names
+
   # we have delivered everything, return empty df (spec is not clear on this one...)
   if (n < 1) {
     return(data.frame(df))
@@ -558,46 +512,23 @@ setMethod("dbFetch", signature(res="MonetDBResult", n="numeric"), def=function(r
   
   # convert values column by column
   for (j in seq.int(info$cols)) {	
-    col <- ct[[j]]
-    if (col == .CT_INT)
-      df[[j]] <- as.integer(parts[[j]])
-    if (col == .CT_NUM) 
-      df[[j]] <- as.numeric(parts[[j]])
-    if (col == .CT_CHRR) 
-      df[[j]] <- parts[[j]]
-    if (col == .CT_BOOL) 
-      df[[j]] <- parts[[j]]=="true"
-    if (col == .CT_CHR) { 
-      df[[j]] <- parts[[j]]
-    }
-    if (col == .CT_RAW) {
-      df[[j]] <- lapply(parts[[j]], charToRaw)
-    }
-    if (col == .CT_LONG) {
-      df[[j]] <- as.integer64(parts[[j]])
-    }
-    if (col == .CT_DATE) {
-      #       print(paste(parts[j]))
-      df[[j]] <- as.POSIXct(parts[[j]], tz="UTC", origin="1970-01-01 00:00:00")
-    }
+    df[[j]] <- as(parts[[j]], ct[[j]])
   }
   
   # remove the already delivered tuples from the background holder or clear it altogether
   if (n+1 >= length(res@env$data)) {
     res@env$data <- character()
-  }
-  else {
+  } else {
     res@env$data <- res@env$data[seq(n+1, length(res@env$data))]
   }
   res@env$delivered <- res@env$delivered + n
   
   # this is a trick so we do not have to call data.frame(), which is expensive
-  attr(df, "row.names") <- c(NA_integer_, length(df[[1]]))
+#   attr(df, "row.names") <- c(NA_integer_, length(df[[1]]))
   class(df) <- "data.frame"
   
   return(df)
 })
-
 
 setMethod("dbClearResult", "MonetDBResult", def = function(res, ...) {
   if (res@env$info$type == Q_TABLE) {
